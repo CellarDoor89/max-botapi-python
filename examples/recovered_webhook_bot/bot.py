@@ -682,6 +682,7 @@ async def main():
     setup_json_logging()
     load_runtime_state()
 
+async def main():
     if WEBHOOK_URL:
         await bot.subscribe_webhook(WEBHOOK_URL)
 
