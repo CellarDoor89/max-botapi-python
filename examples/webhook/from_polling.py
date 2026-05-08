@@ -2,6 +2,10 @@ import asyncio
 import logging
 import os
 
+# В существующем большом bot.py ваши импорты, константы, хранилища
+# и обработчики остаются на месте. Для перехода на Webhook обычно
+# достаточно вынести токен в окружение и заменить нижний запуск.
+
 from maxapi import Bot, Dispatcher
 from maxapi.filters import F
 from maxapi.types import BotStarted, Command, MessageCreated
