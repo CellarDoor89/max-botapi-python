@@ -41,6 +41,8 @@ from sections import (
     white_check,
 )
 
+# Эти импорты используются в полном проекте. В восстановленном каркасе они
+# намеренно оставлены, чтобы верх старого bot.py совпадал с вашей версией.
 _ = (
     html,
     ChatType,
@@ -395,6 +397,290 @@ class JsonFormatter(logging.Formatter):
             payload['exc_info'] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False)
 
+
+
+def setup_json_logging() -> None:
+    """Подключает JSON-лог в файл и обычный лог в консоль."""
+
+    if logger.handlers:
+        return
+
+    file_handler = logging.FileHandler(LOG_FILE_PATH, encoding='utf-8')
+    file_handler.setFormatter(JsonFormatter())
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+
+def load_json(path: Path, default):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        save_json(path, default)
+        return default.copy() if isinstance(default, dict) else default
+
+    with path.open('r', encoding='utf-8') as handle:
+        return json.load(handle)
+
+
+def save_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w', encoding='utf-8') as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+
+
+def load_runtime_state() -> None:
+    """Загружает JSON-состояние, которое раньше жило во внутренней части bot.py."""
+
+    global usage_stats, staff_catalog, staff_bindings
+
+    usage_stats = load_json(USAGE_STATS_FILE, {'daily': {}})
+    staff_catalog = load_json(STAFF_CATALOG_FILE, {})
+    staff_bindings = load_json(STAFF_BINDINGS_FILE, {})
+
+
+def user_id_from_event(event: MessageCreated | MessageCallback) -> int:
+    if isinstance(event, MessageCallback):
+        return event.callback.user.user_id
+    return event.message.sender.user_id
+
+
+def chat_id_from_event(event: MessageCreated | MessageCallback) -> int | None:
+    return event.message.recipient.chat_id
+
+
+def today_key() -> str:
+    return datetime.now(REPORT_TIMEZONE).date().isoformat()
+
+
+def record_usage(user_id: int, action: str) -> None:
+    day = today_key()
+    daily = usage_stats.setdefault('daily', {})
+    stat = daily.setdefault(day, {'users': [], 'actions': {}})
+
+    users = stat.setdefault('users', [])
+    if user_id not in users:
+        users.append(user_id)
+
+    actions = stat.setdefault('actions', {})
+    actions[action] = actions.get(action, 0) + 1
+    save_json(USAGE_STATS_FILE, usage_stats)
+
+
+def button(text: str, payload: str) -> CallbackButton:
+    return CallbackButton(text=text, payload=payload)
+
+
+def link_button(text: str, url: str) -> LinkButton:
+    return LinkButton(text=text, url=url)
+
+
+def keyboard_from_rows(rows: list[list[CallbackButton | LinkButton]]) -> AttachmentButton:
+    builder = InlineKeyboardBuilder()
+    for row in rows:
+        builder.row(*row)
+    return builder.as_markup()
+
+
+def main_menu_keyboard() -> AttachmentButton:
+    return keyboard_from_rows([
+        [button('Подразделения ФНС ЯНАО', ADDRESSES_MENU_PAYLOAD)],
+        [button('Реквизиты ИФНС', IFNS_DETAILS_MENU_PAYLOAD)],
+        [button('Подразделения МФЦ ЯНАО', MFC_MENU_PAYLOAD)],
+        [button(ens_help.TITLE, ENS_HELP_MENU_PAYLOAD)],
+        [button('Задолженность', DEBT_MENU_PAYLOAD)],
+        [button('Уплата налогов и пошлин', PAYMENTS_MENU_PAYLOAD)],
+        [button('Обратная связь', FEEDBACK_START_PAYLOAD)],
+        [button('Проблемы с чеком', WHITE_CHECK_MENU_PAYLOAD)],
+        [button('Телефоны для связи', PHONES_MENU_PAYLOAD)],
+        [button(faq.TITLE, f'{MENU_SECTION_PREFIX}faq')],
+        [button('Политика обработки данных', f'{MENU_SECTION_PREFIX}policy')],
+    ])
+
+
+def back_to_menu_keyboard() -> AttachmentButton:
+    return keyboard_from_rows([[button('⬅️ Главное меню', MENU_PAYLOAD)]])
+
+
+def policy_keyboard() -> AttachmentButton:
+    rows: list[list[CallbackButton | LinkButton]] = [
+        [button('✅ Даю согласие', ACCEPT_PAYLOAD)],
+        [button('⬅️ Главное меню', MENU_PAYLOAD)],
+    ]
+    if POLICY_URL:
+        rows.insert(1, [link_button('Открыть политику', POLICY_URL)])
+    return keyboard_from_rows(rows)
+
+
+def section_keyboard(section: str) -> AttachmentButton:
+    return keyboard_from_rows([
+        [button('Открыть раздел', f'{MENU_SECTION_PREFIX}{section}')],
+        [button('⬅️ Главное меню', MENU_PAYLOAD)],
+    ])
+
+
+def section_text(payload: str) -> tuple[str, str]:
+    mapping = {
+        ADDRESSES_MENU_PAYLOAD: ('addresses', 'Подразделения ФНС ЯНАО'),
+        IFNS_DETAILS_MENU_PAYLOAD: ('ifns_details', 'Определение реквизитов ИФНС'),
+        ENS_HELP_MENU_PAYLOAD: ('ens_help', ens_help.TITLE),
+        MFC_MENU_PAYLOAD: ('mfc', 'Подразделения МФЦ ЯНАО'),
+        DEBT_MENU_PAYLOAD: ('debt', 'Узнать свою задолженность'),
+        PAYMENTS_MENU_PAYLOAD: ('payments', 'Уплата налогов и пошлин'),
+        PHONES_MENU_PAYLOAD: ('phones', 'Телефоны для связи'),
+        WHITE_CHECK_MENU_PAYLOAD: ('white_check', 'Проблемы с чеком'),
+        FEEDBACK_START_PAYLOAD: ('feedback', 'Обратная связь'),
+    }
+    section, title = mapping.get(payload, (payload.removeprefix(MENU_SECTION_PREFIX), 'Раздел'))
+
+    details = {
+        'addresses': 'Здесь можно разместить адреса подразделений ФНС ЯНАО и кнопки по офисам.',
+        'ifns_details': 'Здесь можно восстановить сценарий определения реквизитов ИФНС.',
+        'ens_help': 'Здесь можно восстановить подсказки по Единому налоговому счёту.',
+        'mfc': 'Здесь можно восстановить список подразделений МФЦ с постраничной навигацией.',
+        'debt': 'Здесь можно восстановить сценарий проверки задолженности.',
+        'payments': 'Здесь можно восстановить раздел уплаты налогов и пошлин.',
+        'feedback': 'Здесь можно восстановить сценарий обратной связи и создания обращения.',
+        'white_check': 'Здесь можно восстановить сценарий сообщения о проблеме с чеком.',
+        'phones': 'Здесь можно восстановить телефоны для связи по темам.',
+        'faq': 'Здесь можно восстановить частые вопросы и ответы.',
+        'policy': POLICY_NOTICE,
+    }
+    return section, f'{title}\n\n{details.get(section, "Раздел восстановлен как точка входа для дальнейшего наполнения.")}'
+
+
+async def send_main_menu(event: MessageCreated | MessageCallback, text: str = MAIN_MENU_TEXT) -> None:
+    user_id = user_id_from_event(event)
+    store.record_interaction(user_id)
+    record_usage(user_id, 'main_menu')
+    await event.message.answer(text=text, attachments=[main_menu_keyboard()])
+
+
+async def send_policy(event: MessageCreated | MessageCallback) -> None:
+    user_id = user_id_from_event(event)
+    store.record_interaction(user_id)
+    record_usage(user_id, 'policy')
+    await event.message.answer(text=POLICY_NOTICE, attachments=[policy_keyboard()])
+
+
+async def send_section(event: MessageCreated | MessageCallback, payload: str) -> None:
+    user_id = user_id_from_event(event)
+    store.record_interaction(user_id)
+    record_usage(user_id, payload)
+    section, text = section_text(payload)
+    await event.message.answer(text=text, attachments=[section_keyboard(section)])
+
+
+@dp.bot_started()
+async def handle_bot_started(event: BotStarted):
+    if event.chat_id is not None:
+        await event.bot.send_message(
+            chat_id=event.chat_id,
+            text='Здравствуйте! Перед началом работы подтвердите согласие на обработку персональных данных.',
+            attachments=[policy_keyboard()],
+        )
+
+
+@dp.message_created(CommandStart())
+async def handle_start(event: MessageCreated):
+    user_id = event.message.sender.user_id
+    store.record_interaction(user_id)
+    record_usage(user_id, 'start')
+
+    if store.is_accepted(user_id):
+        await send_main_menu(event, 'Здравствуйте! Главное меню уже доступно.')
+        return
+
+    await send_policy(event)
+
+
+@dp.message_created(Command('menu'))
+async def handle_menu_command(event: MessageCreated):
+    await send_main_menu(event)
+
+
+@dp.message_created(Command('help'))
+async def handle_help_command(event: MessageCreated):
+    await event.message.answer(
+        text=(
+            'Доступные команды:\n'
+            '/start — начать работу с ботом\n'
+            '/menu — открыть главное меню\n'
+            '/help — показать эту подсказку'
+        ),
+        attachments=[back_to_menu_keyboard()],
+    )
+
+
+@dp.message_callback()
+async def handle_callback(event: MessageCallback):
+    payload = event.callback.payload or ''
+    user_id = event.callback.user.user_id
+    store.record_interaction(user_id)
+
+    if payload == ACCEPT_PAYLOAD:
+        store.accept(user_id)
+        record_usage(user_id, 'accept_policy')
+        await event.answer(notification='Согласие сохранено')
+        await send_main_menu(event, 'Спасибо! Теперь можно выбрать раздел.')
+        return
+
+    if payload == MENU_PAYLOAD:
+        await event.answer(notification='Открываю меню')
+        await send_main_menu(event)
+        return
+
+    if payload in {
+        ADDRESSES_MENU_PAYLOAD,
+        IFNS_DETAILS_MENU_PAYLOAD,
+        ENS_HELP_MENU_PAYLOAD,
+        MFC_MENU_PAYLOAD,
+        DEBT_MENU_PAYLOAD,
+        PAYMENTS_MENU_PAYLOAD,
+        PHONES_MENU_PAYLOAD,
+        WHITE_CHECK_MENU_PAYLOAD,
+        FEEDBACK_START_PAYLOAD,
+    }:
+        await event.answer(notification='Открываю раздел')
+        await send_section(event, payload)
+        return
+
+    if payload.startswith(MENU_SECTION_PREFIX):
+        await event.answer(notification='Открываю раздел')
+        await send_section(event, payload)
+        return
+
+    await event.answer(notification='Раздел пока не восстановлен')
+    await event.message.answer(
+        text='Этот сценарий ещё нужно дозаполнить из старого проекта.',
+        attachments=[back_to_menu_keyboard()],
+    )
+
+
+@dp.message_created()
+async def handle_text_message(event: MessageCreated):
+    user_id = event.message.sender.user_id
+    store.record_interaction(user_id)
+    record_usage(user_id, 'message')
+
+    if not store.is_accepted(user_id):
+        await send_policy(event)
+        return
+
+    text = (event.message.body.text or '').strip().lower()
+    if text in {'меню', 'menu', 'главное меню'}:
+        await send_main_menu(event)
+        return
+
+    await event.message.answer(
+        text='Я восстановлен и работаю через Webhook. Выберите нужный раздел в меню.',
+        attachments=[main_menu_keyboard()],
+    )
+
+
+async def main():
+    setup_json_logging()
+    load_runtime_state()
 
 async def main():
     if WEBHOOK_URL:
