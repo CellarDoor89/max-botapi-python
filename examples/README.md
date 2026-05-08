@@ -9,3 +9,4 @@
  - [Вебхуки](https://github.com/love-apples/maxapi/tree/main/examples/webhook), включая перенос бота с Long Polling на Webhook
  - [Клавиатуры](https://github.com/love-apples/maxapi/tree/main/examples/keyboard/main.py)
  - [Миддлварь в роутерах](https://github.com/love-apples/maxapi/tree/main/examples/middleware_for_router/main.py)
+ - [Восстановленный webhook-бот](https://github.com/love-apples/maxapi/tree/main/examples/recovered_webhook_bot)

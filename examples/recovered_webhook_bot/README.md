@@ -1,0 +1,32 @@
+# Восстановленный webhook-бот
+
+Это каркас проекта, восстановленный по присланному фрагменту старого `bot.py`.
+Я не смог автоматически прочитать удалённый GitHub-репозиторий или содержимое приватного ChatGPT-share,
+поэтому сюда перенесён доступный фрагмент: импорты, константы, `AcceptanceStore`, dataclass-модели,
+JSON-логгер и запуск через Webhook.
+
+## Что восстановлено
+
+- `bot.py` — основной файл бота с переходом с Long Polling на Webhook.
+- `middlewares/accept_policy.py` — минимальный модуль с текстом и URL политики.
+- `sections/*.py` — минимальные модули-разделы с константами payload, которые используются в верхней части `bot.py`.
+- `data/*.json` — стартовые JSON-файлы для локального состояния.
+- `assets/.gitkeep`, `logs/.gitkeep` — пустые каталоги под изображения и логи.
+
+## Как запускать
+
+```bash
+pip install 'maxapi[webhook]'
+export MAX_BOT_TOKEN='ваш_токен'
+export MAX_WEBHOOK_URL='https://example.com/'
+export MAX_WEBHOOK_HOST='0.0.0.0'
+export MAX_WEBHOOK_PORT='8080'
+python examples/recovered_webhook_bot/bot.py
+```
+
+Если webhook-подписка уже создана вручную, `MAX_WEBHOOK_URL` можно не задавать.
+
+## Важно
+
+В присланном сообщении верх `bot.py` был продублирован два раза. В восстановленном файле дубль убран:
+`Bot(...)`, `Dispatcher()` и хранилища инициализируются один раз.
